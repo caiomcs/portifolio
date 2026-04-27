@@ -1,0 +1,1764 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Caio Magalhães · Fotografia · Musubi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=JetBrains+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper:    oklch(0.975 0.004 75);
+    --paper-2:  oklch(0.955 0.006 72);
+    --grid-fine:   rgba(70, 110, 170, 0.12);
+    --grid-major:  rgba(60, 100, 165, 0.22);
+    --ink:      oklch(0.28 0.01 40);
+    --ink-dim:  oklch(0.55 0.012 48);
+    --serif:    "Cormorant Garamond", "Times New Roman", serif;
+    --mono:     "JetBrains Mono", ui-monospace, monospace;
+
+    /* Curva de câmera: ease-out suave, "premium feel". */
+    --dolly-ease: cubic-bezier(.22, .61, .26, 1);
+    --dolly-ms:   620ms;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    -webkit-font-smoothing: antialiased;
+  }
+  body { overflow-x: hidden; }
+  body.dolly-open { overflow: hidden; }
+
+  /* ════════════════════════════════════════════════════════════════════
+     SCENE — wrapper que sofre o "dolly". Contém grade, threads e fotos.
+     A câmera entra no mundo aplicando transform translate+scale na cena.
+     ════════════════════════════════════════════════════════════════════ */
+  .scene {
+    position: fixed; inset: 0;
+    z-index: 0;
+    pointer-events: none;             /* só os beads dentro recebem clique */
+    transform-origin: 0 0;
+    will-change: transform;
+    transition: transform var(--dolly-ms) var(--dolly-ease);
+  }
+
+  /* Japanese planner grid: fine 24px cells + major 120px cells */
+  .paper {
+    position: absolute; inset: 0; z-index: 0;
+    pointer-events: none;
+    background-color: var(--paper);
+    background-image:
+      linear-gradient(to right,  var(--grid-major) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-major) 1px, transparent 1px),
+      linear-gradient(to right,  var(--grid-fine) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-fine) 1px, transparent 1px);
+    background-size:
+      120px 120px,
+      120px 120px,
+      24px 24px,
+      24px 24px;
+    background-position: 0 0, 0 0, 0 0, 0 0;
+    opacity: 0.9;
+  }
+  .paper-warm {
+    position: absolute; inset: 0; z-index: 1;
+    pointer-events: none;
+    background: radial-gradient(ellipse at 50% 30%,
+      transparent 50%,
+      color-mix(in oklab, var(--paper-2) 100%, black 4%) 100%);
+    opacity: 0.5;
+  }
+
+  /* Thread canvas */
+  .threads {
+    position: absolute; inset: 0; z-index: 2;
+    pointer-events: none;
+    width: 100%; height: 100%;
+  }
+
+  /* Bead layer (fotos que rodam pelas threads) */
+  .beads {
+    position: absolute; inset: 0; z-index: 3;
+    pointer-events: none;
+  }
+
+  .bead {
+    position: absolute;
+    pointer-events: auto;
+    width: var(--w, 200px);
+    height: var(--h, 260px);
+    transform: translate(-50%, -50%);
+    opacity: 0;
+    /* Entrada "como um sonho": atravessa um nevoeiro de 22px de blur,
+       leva 1700ms — a foto vem de longe, costura no nó dos fios e
+       SÓ ENTÃO resolve em opacidade plena. Curva ease-out forte
+       segura o último terço do tempo na imagem nítida. */
+    transition: opacity 1700ms cubic-bezier(.2,.7,.1,1),
+                filter 1700ms cubic-bezier(.2,.7,.1,1);
+    filter: blur(22px);
+    will-change: transform, opacity;
+    cursor: pointer;
+  }
+  /* Foto resolvida: opacidade plena (sem variação persistente — todas
+     respiram igual depois que assentam no nó). */
+  .bead.visible { opacity: var(--alpha, 1); filter: blur(0); }
+
+  .bead .plate {
+    position: relative;
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: var(--paper-2);
+    box-shadow:
+      0 30px 50px -22px rgba(50,30,20,0.18),
+      0 0 0 1px rgba(40,25,15,0.06);
+    transition: box-shadow 400ms cubic-bezier(.2,.7,.1,1),
+                transform 400ms cubic-bezier(.2,.7,.1,1);
+  }
+  .bead:hover .plate {
+    box-shadow:
+      0 40px 60px -22px rgba(50,30,20,0.28),
+      0 0 0 1px rgba(40,25,15,0.10);
+    transform: translateY(-2px);
+  }
+  /* Placeholder (gradient) só aparece se NÃO houver <img> dentro */
+  .bead .plate.is-placeholder::before {
+    content:'';
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(to bottom,
+        oklch(0.86 0.006 var(--hue, 60)),
+        oklch(0.74 0.008 var(--hue, 60)));
+  }
+  .bead .plate.is-placeholder::after {
+    content:'';
+    position: absolute; inset: 0;
+    background:
+      repeating-linear-gradient(45deg,
+        rgba(255,255,255,0) 0 5px,
+        rgba(0,0,0,0.025) 5px 6px),
+      radial-gradient(circle at 32% 24%,
+        rgba(255,255,255,0.32), transparent 62%);
+    mix-blend-mode: multiply;
+  }
+  .bead .plate img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+    user-select: none;
+    -webkit-user-drag: none;
+    z-index: 1;
+  }
+
+  body.dolly-open .bead { pointer-events: none; cursor: default; }
+
+  /* ----- Hero (vertical title + intro) ----- */
+  .hero {
+    min-height: 100vh;
+    position: relative;
+    z-index: 5;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: clamp(48px, 8vw, 120px);
+    padding: 0 clamp(40px, 8vw, 120px);
+    pointer-events: none;
+  }
+  .hero > * { pointer-events: auto; }
+  .hero .vtitle {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: clamp(120px, 18vw, 260px);
+    line-height: 0.9;
+    letter-spacing: 0.02em;
+    color: var(--ink);
+    mix-blend-mode: multiply;
+    margin: 0;
+    animation: softIn 2800ms cubic-bezier(.2,.7,.1,1) both;
+  }
+  .hero .intro {
+    max-width: 40ch;
+    animation: softIn 2800ms cubic-bezier(.2,.7,.1,1) 300ms both;
+  }
+  .hero .intro .lead {
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: clamp(22px, 2.4vw, 30px);
+    line-height: 1.35;
+    color: var(--ink);
+    margin: 0 0 28px;
+    text-wrap: balance;
+    mix-blend-mode: multiply;
+  }
+  .hero .intro .body {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(15px, 1.35vw, 18px);
+    line-height: 1.75;
+    color: var(--ink-dim);
+    margin: 0;
+    text-wrap: pretty;
+    mix-blend-mode: multiply;
+  }
+  @keyframes softIn {
+    from { opacity: 0; filter: blur(16px); transform: translateY(18px); }
+    to   { opacity: 1; filter: blur(0);    transform: translateY(0); }
+  }
+
+  /* The scrollable world (apenas dá altura) — NÃO captura pointer events */
+  .world {
+    position: relative;
+    z-index: 4;
+    pointer-events: none;
+  }
+
+  /* Coda */
+  .coda {
+    position: relative;
+    z-index: 5;
+    min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0;
+    padding: 0 10vw;
+  }
+  .coda-lead {
+    margin: 0 0 18px;
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: clamp(24px, 3vw, 36px);
+    line-height: 1.45;
+    color: var(--ink);
+    max-width: 24ch;
+    text-align: center;
+    text-wrap: balance;
+    opacity: 0.88;
+    mix-blend-mode: multiply;
+  }
+  .coda-sub {
+    margin: 0 0 44px;
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(15px, 1.3vw, 17px);
+    line-height: 1.6;
+    color: var(--ink-dim);
+    max-width: 34ch;
+    text-align: center;
+    text-wrap: balance;
+    mix-blend-mode: multiply;
+  }
+  .coda-tiny {
+    margin: 56px 0 0;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    opacity: 0.7;
+  }
+  .wpp {
+    position: relative;
+    display: inline-flex; align-items: baseline; gap: 14px;
+    padding: 18px 34px 20px;
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: 22px;
+    letter-spacing: 0.01em;
+    color: var(--ink);
+    text-decoration: none;
+    background: transparent;
+    border: 1px solid color-mix(in oklab, var(--ink) 28%, transparent);
+    border-radius: 2px;
+    transition: background 600ms cubic-bezier(.2,.7,.1,1),
+                border-color 600ms cubic-bezier(.2,.7,.1,1),
+                color 600ms cubic-bezier(.2,.7,.1,1),
+                transform 600ms cubic-bezier(.2,.7,.1,1);
+    mix-blend-mode: multiply;
+  }
+  .wpp .wpp-arrow {
+    font-family: var(--serif);
+    font-style: normal;
+    font-size: 20px;
+    transform: translateY(-1px);
+    transition: transform 600ms cubic-bezier(.2,.7,.1,1);
+  }
+  .wpp:hover {
+    background: hsl(358 82% 30% / 0.94);
+    border-color: hsl(358 82% 30%);
+    color: var(--paper);
+    transform: translateY(-1px);
+  }
+  .wpp:hover .wpp-arrow { transform: translate(3px, -3px); }
+
+  /* Quando o WhatsApp esta dentro de .contacts, equaliza dimensoes com
+     .social-btn (mesmo padding, mesma font, mesmo gap). O hover vermelho
+     do .wpp continua valendo - eh o que distingue o CTA primario sem
+     precisar de tamanho diferente. */
+  .contacts .wpp.social-btn-primary {
+    padding: 14px 22px 15px;
+    font-size: 17px;
+    gap: 10px;
+  }
+  .contacts .wpp.social-btn-primary .social-btn-label,
+  .contacts .wpp.social-btn-primary .social-btn-arrow {
+    /* labels e setas usam o mesmo CSS de .social-btn-* abaixo */
+  }
+
+  /* Contacts row - agrupa WhatsApp + Instagram + TikTok num bloco
+     centralizado. Em desktop ficam lado a lado; mobile empilha. A
+     WhatsApp permanece o CTA primario (maior, mais carregada); IG e
+     TikTok sao secundarios, mesma familia tipografica e mesma curva
+     de hover, so ligeiramente menores. */
+  .contacts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    max-width: 720px;
+  }
+  .social-btn {
+    position: relative;
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 14px 22px 15px;
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: 17px;
+    letter-spacing: 0.01em;
+    color: var(--ink);
+    text-decoration: none;
+    background: transparent;
+    border: 1px solid color-mix(in oklab, var(--ink) 22%, transparent);
+    border-radius: 2px;
+    transition: background 600ms cubic-bezier(.2,.7,.1,1),
+                border-color 600ms cubic-bezier(.2,.7,.1,1),
+                color 600ms cubic-bezier(.2,.7,.1,1),
+                transform 600ms cubic-bezier(.2,.7,.1,1);
+    mix-blend-mode: multiply;
+  }
+  .social-btn-icon {
+    flex: 0 0 auto;
+    width: 16px; height: 16px;
+    transform: translateY(-1px);
+    transition: transform 600ms cubic-bezier(.2,.7,.1,1);
+  }
+  .social-btn-label { line-height: 1; }
+  .social-btn-arrow {
+    font-style: normal;
+    font-size: 16px;
+    transform: translateY(-1px);
+    transition: transform 600ms cubic-bezier(.2,.7,.1,1);
+  }
+  .social-btn:hover {
+    background: color-mix(in oklab, var(--ink) 92%, transparent);
+    border-color: var(--ink);
+    color: var(--paper);
+    transform: translateY(-1px);
+  }
+  .social-btn:hover .social-btn-arrow {
+    transform: translate(3px, -3px);
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     DOLLY OVERLAY — vinheta sutil + caption + botão fechar.
+     ════════════════════════════════════════════════════════════════════ */
+  .dolly-overlay {
+    position: fixed; inset: 0;
+    z-index: 80;
+    pointer-events: none;
+    background: radial-gradient(ellipse at 50% 50%,
+                  rgba(20,14,8,0.00) 35%,
+                  rgba(20,14,8,0.42) 78%,
+                  rgba(20,14,8,0.62) 100%);
+    opacity: 0;
+    transition: opacity var(--dolly-ms) var(--dolly-ease);
+  }
+  .dolly-overlay.active {
+    opacity: 1;
+    pointer-events: auto;
+    cursor: zoom-out;
+  }
+
+  .dolly-caption {
+    position: fixed;
+    left: 50%; bottom: 5.5vh;
+    transform: translate(-50%, 8px);
+    z-index: 90;
+    text-align: center;
+    color: var(--paper);
+    opacity: 0;
+    transition: opacity 520ms var(--dolly-ease) 220ms,
+                transform 520ms var(--dolly-ease) 220ms;
+    pointer-events: none;
+    max-width: 60ch;
+    padding: 0 24px;
+  }
+  .dolly-caption.active {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  .dolly-caption .dc-text {
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: clamp(18px, 2vw, 24px);
+    line-height: 1.4;
+    color: rgba(255, 250, 244, 0.94);
+    margin: 0 0 8px;
+    text-wrap: balance;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.45);
+  }
+  .dolly-caption .dc-id {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: rgba(255, 250, 244, 0.55);
+    margin: 0;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.4);
+  }
+
+  .dolly-close {
+    position: fixed;
+    top: 24px; right: 28px;
+    z-index: 95;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: rgba(255, 250, 244, 0.65);
+    background: transparent;
+    border: 1px solid rgba(255, 250, 244, 0.28);
+    padding: 10px 16px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 520ms var(--dolly-ease) 220ms,
+                color 300ms, border-color 300ms;
+    pointer-events: none;
+  }
+  .dolly-close.active { opacity: 1; pointer-events: auto; }
+  .dolly-close:hover { color: var(--paper); border-color: rgba(255, 250, 244, 0.7); }
+
+  @media (prefers-reduced-motion: reduce) {
+    :root { --dolly-ms: 220ms; }
+    .bead { transition: opacity 200ms linear, filter 200ms linear; }
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     MOBILE — versão enxuta da engine.
+
+     A versão anterior matava o canvas inteiro pra ganhar fluidez, mas
+     com isso a página perdia o conceito (os fios musubi). Esta versão
+     mantém a poética: 2 fios serpenteando com respiração, mas:
+
+       • só 2 fios em vez de 8 → ~75% menos trabalho de stroke
+       • beads JS-positionados desligados (fotos vão em flow native)
+       • dolly com transform de cena desligado (lightbox simples no lugar)
+       • frame loop com cap de 30fps
+       • DPR 1.0, sem blur, sem glow pass (já no threads.js)
+
+     Resultado: scroll touch fica nas mãos do compositor do navegador
+     (zero JS na main thread durante o scroll de fotos), enquanto os
+     fios continuam vivos como pano de fundo. Os fios passam por trás
+     das fotos e ficam visíveis nos vãos generosos entre elas — o
+     conceito de "fios costurando o portfólio" se mantém.
+     ════════════════════════════════════════════════════════════════════ */
+  .mobile-shell { display: none; }
+  .lb { display: none; }
+
+  @media (max-width: 720px) {
+    /* Cena (paper, paper-warm, canvas dos fios E beads) PERMANECE visível.
+       Mobile agora também usa o sistema de beads-sobre-threads do desktop;
+       só o overlay do dolly fica desligado — abrimos um lightbox simples. */
+    .dolly-overlay,
+    .dolly-caption,
+    .dolly-close { display: none !important; }
+
+    /* A galeria flat antiga (.mobile-shell) está desativada. O conteúdo
+       das fotos volta pra cena, posicionado pelos fios. */
+    .mobile-shell { display: none !important; }
+
+    /* Mobile beads: hover lift não faz sentido em touch; troco por um
+       pequeno feedback de :active. Sombra um tiquinho mais leve. */
+    .bead .plate {
+      box-shadow:
+        0 14px 24px -14px rgba(50,30,20,0.22),
+        0 0 0 1px rgba(40,25,15,0.06);
+    }
+    .bead:hover .plate { transform: none; }
+    .bead:active .plate { transform: scale(0.97); }
+
+    /* Hero adaptado pra coluna única */
+    .hero {
+      grid-template-columns: 1fr;
+      padding: 14vh 28px 6vh;
+      gap: 36px;
+      min-height: 88vh;
+      pointer-events: auto;
+    }
+    .hero .vtitle {
+      writing-mode: horizontal-tb;
+      transform: none;
+      font-size: clamp(72px, 20vw, 140px);
+    }
+
+    /* ── Lightbox CENTRALIZADO de verdade ─────────────────────────────
+       Foto + caption + ID viram um BLOCO flex-column centrado tanto na
+       horizontal quanto na vertical. Antes a foto ficava centralizada
+       mas a caption flutuava no bottom — o conjunto não se sentia
+       centralizado. Agora tudo respira como uma unidade. */
+    .lb {
+      display: none;
+      position: fixed; inset: 0;
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      background: rgba(20, 14, 8, 0.96);
+      padding: 24px 18px;
+      opacity: 0;
+      transition: opacity 280ms cubic-bezier(.2,.7,.1,1);
+      /* Mantém a textura sutil do paper visível por trás (mas bem fraca)
+         pra continuar a estética da página em vez de virar um modal genérico. */
+      backdrop-filter: blur(2px);
+    }
+    .lb.active {
+      display: flex;
+      opacity: 1;
+    }
+    .lb-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      max-width: 100%;
+      max-height: 100%;
+    }
+    .lb-img {
+      max-width: 100%;
+      max-height: 68vh;
+      object-fit: contain;
+      box-shadow: 0 30px 60px -20px rgba(0,0,0,0.55);
+    }
+    .lb-cap {
+      margin: 0;
+      padding: 0 12px;
+      text-align: center;
+      font-family: var(--serif);
+      font-style: italic;
+      font-weight: 300;
+      font-size: 17px;
+      line-height: 1.35;
+      color: rgba(255, 250, 244, 0.94);
+      text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      text-wrap: balance;
+      max-width: 30ch;
+    }
+    .lb-id {
+      margin: 0;
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.32em;
+      text-transform: uppercase;
+      color: rgba(255, 250, 244, 0.5);
+      text-align: center;
+    }
+    .lb-close {
+      position: absolute;
+      top: 14px; right: 14px;
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      background: rgba(255, 250, 244, 0.08);
+      border: 1px solid rgba(255, 250, 244, 0.22);
+      color: rgba(255, 250, 244, 0.85);
+      font-family: var(--serif);
+      font-size: 22px;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+    .lb-close:active {
+      background: rgba(255, 250, 244, 0.16);
+    }
+
+    /* Respiros mobile — texto mais compacto, mesmo respiro visual. */
+    .respiro {
+      width: min(360px, 88vw);
+      padding: 0 14px;
+    }
+    .respiro .r-mark { font-size: 9px; margin-bottom: 16px; letter-spacing: 0.30em; }
+    .respiro .r-lead { font-size: 22px; line-height: 1.36; margin-bottom: 16px; }
+    .respiro .r-body { font-size: 14.5px; line-height: 1.6; max-width: 32ch; }
+
+    /* Mobile contacts: empilha vertical, todos da mesma largura. */
+    .contacts {
+      flex-direction: column;
+      gap: 10px;
+      width: min(360px, 88vw);
+    }
+    .contacts .wpp,
+    .contacts .social-btn {
+      width: 100%;
+      justify-content: center;
+    }
+    .social-btn { font-size: 16px; padding: 13px 20px 14px; }
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     RESPIRO — narrativa intercalada ao scroll. Painéis posicionados
+     absolutamente dentro de .world (que tem altura definida via JS).
+     --frac (0..1) vira top em % da altura do mundo. Frame loop atualiza
+     opacidade conforme entram/saem da view: surgem como memória, descansam
+     no centro da tela, somem. Mesma poética das fotos que aparecem nas
+     interseções dos fios — só que sem foto. Espaço pra respirar.
+     ════════════════════════════════════════════════════════════════════ */
+  .respiro {
+    position: absolute;
+    left: 50%;
+    top: calc(var(--frac, 0.5) * 100%);
+    transform: translate(-50%, -50%);
+    width: min(560px, 86vw);
+    text-align: center;
+    pointer-events: auto;
+    z-index: 6;
+    margin: 0;
+    padding: 0 24px;
+    opacity: 0;
+    transition: opacity 600ms cubic-bezier(.2,.7,.1,1);
+  }
+  .respiro .r-mark {
+    margin: 0 0 22px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.34em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    opacity: 0.65;
+  }
+  .respiro .r-lead {
+    margin: 0 0 22px;
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: clamp(24px, 2.6vw, 34px);
+    line-height: 1.4;
+    color: var(--ink);
+    text-wrap: balance;
+    mix-blend-mode: multiply;
+  }
+  .respiro .r-body {
+    margin: 0 auto;
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: clamp(15px, 1.35vw, 18px);
+    line-height: 1.75;
+    color: var(--ink-dim);
+    max-width: 38ch;
+    text-wrap: pretty;
+    mix-blend-mode: multiply;
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     CENA: paper + canvas dos fios + beads-layer.
+     - Desktop: paper + threads + beads animados + dolly de cena.
+     - Mobile:  paper + threads + beads animados (mesma engine, com
+                escala menor + DPR 1.0). Click numa foto abre lightbox
+                simples (.lb) em vez do dolly. Overlays do dolly ficam
+                display:none no @media mobile.
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="scene" id="scene">
+  <div class="paper"></div>
+  <div class="paper-warm"></div>
+  <canvas class="threads" id="threads"></canvas>
+  <div class="beads" id="beads"></div>
+</div>
+
+<div class="dolly-overlay" id="dollyOverlay" aria-hidden="true"></div>
+<div class="dolly-caption" id="dollyCaption" aria-hidden="true">
+  <p class="dc-text" id="dollyText"></p>
+  <p class="dc-id"   id="dollyId"></p>
+</div>
+<button class="dolly-close" id="dollyClose" aria-label="fechar">esc · fechar</button>
+
+<!-- Conteúdo de scroll (compartilhado entre os dois modos) -->
+<section class="hero">
+  <h1 class="vtitle">Musubi</h1>
+  <div class="intro">
+    <p class="lead">Entre a luz e a distância, algo permanece.</p>
+    <p class="body">Sou Caio Magalhães, fotógrafo no Porto. Trabalho com retratos e fotografia documental em espaços abertos, criando imagens que se aproximam mais do cinema do que do digital.</p>
+  </div>
+</section>
+
+<!-- Spacer que dá altura pra cena rolar. Usado por desktop E mobile
+     agora — ambos posicionam fotos ao longo dos fios, então precisam
+     do mesmo "comprimento de mundo" (VIEWPORT_H × 6.5). -->
+<div class="world" id="world">
+  <article class="respiro" data-respiro="1" style="--frac:.20">
+    <p class="r-mark">i.</p>
+    <p class="r-lead"><em>Sempre há algo prestes a acontecer.</em></p>
+    <p class="r-body">Me interessam momentos que não se resolvem por completo — alguém atravessando, um gesto interrompido, uma presença que ainda não se fixou. Eu não dirijo a cena. Espero o momento acontecer.</p>
+  </article>
+  <article class="respiro" data-respiro="2" style="--frac:.50">
+    <p class="r-mark">ii.</p>
+    <p class="r-lead"><em>O espaço também constrói a imagem.</em></p>
+    <p class="r-body">Fotografo ruas, interiores e paisagens como partes ativas da cena. A luz, a arquitetura e a distância não são fundo — são o que define como a imagem se organiza.</p>
+  </article>
+  <article class="respiro" data-respiro="3" style="--frac:.80">
+    <p class="r-mark">iii.</p>
+    <p class="r-lead"><em>Cada imagem é um ponto de encontro.</em></p>
+    <p class="r-body">Retratos, cenas urbanas e fragmentos do cotidiano. As imagens não explicam — elas se sustentam. O que importa é o momento em que tudo se alinha.</p>
+  </article>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     Galeria flat antiga (.mobile-shell) DESATIVADA. Mantida no markup
+     pra histórico — o CSS faz display:none em todas as resoluções
+     porque agora as fotos voltaram pra cena, posicionadas pelos fios.
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="mobile-shell" id="mobileShell" aria-label="galeria"></section>
+
+<section class="coda">
+  <p class="coda-lead"><em>Para a próxima cena.</em></p>
+  <p class="coda-sub">Disponível para retratos, ensaios e projetos documentais.</p>
+  <div class="contacts">
+    <a class="social-btn" href="https://instagram.com/" target="_blank" rel="noopener" aria-label="Instagram">
+      <svg class="social-btn-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <rect x="3" y="3" width="18" height="18" rx="5" ry="5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <circle cx="17.4" cy="6.6" r="1" fill="currentColor"/>
+      </svg>
+      <span class="social-btn-label">Instagram</span>
+      <span class="social-btn-arrow" aria-hidden="true">↗</span>
+    </a>
+    <a class="wpp social-btn social-btn-primary" href="https://wa.me/351000000000" target="_blank" rel="noopener" aria-label="WhatsApp">
+      <svg class="social-btn-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <path d="M4 5h16v10h-9l-5 4v-4H4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+      <span class="social-btn-label">iniciar conversa</span>
+      <span class="social-btn-arrow" aria-hidden="true">↗</span>
+    </a>
+    <a class="social-btn" href="https://www.tiktok.com/@" target="_blank" rel="noopener" aria-label="TikTok">
+      <svg class="social-btn-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <path d="M14.5 3v9.6a3.4 3.4 0 1 1-3.4-3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M14.5 3c.4 2.4 2.1 4.1 4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="social-btn-label">TikTok</span>
+      <span class="social-btn-arrow" aria-hidden="true">↗</span>
+    </a>
+  </div>
+  <p class="coda-tiny">— Caio Magalhães · Porto</p>
+</section>
+
+<!-- Lightbox mobile (escondido até alguém clicar numa foto).
+     Estrutura: button fecha (canto), e um único .lb-content que agrupa
+     a imagem + caption + id num bloco flex-column. Centro real do
+     conjunto = centro real da viewport. -->
+<div class="lb" id="lb" aria-hidden="true">
+  <button class="lb-close" id="lbClose" aria-label="fechar">×</button>
+  <div class="lb-content">
+    <img class="lb-img" id="lbImg" alt="" />
+    <p class="lb-cap" id="lbCap"></p>
+    <p class="lb-id"  id="lbId"></p>
+  </div>
+</div>
+
+<script src="threads.js?v=12"></script>
+<script>
+(function() {
+  'use strict';
+
+  // ════════════════════════════════════════════════════════════════════
+  // Mobile flag — única decisão de runtime que importa aqui. Tudo abaixo
+  // bifurca em initMobile() vs initDesktop(). Threshold 720px alinha com
+  // o @media do CSS.
+  // ════════════════════════════════════════════════════════════════════
+  const IS_MOBILE = window.matchMedia('(max-width: 720px)').matches;
+
+  // Dataset compartilhado: as fotos + captions.
+  // ORDEM: as 3 fotos REAIS (02/03/04) vem primeiro porque os
+  // primeiros indices recebem os cruzamentos do topo da pagina (hero +
+  // entrada da imersao). Ali a foto precisa carregar peso visual real
+  // — os placeholders ficam para o miolo, onde a malha de fios ja
+  // sustenta a leitura mesmo com gradientes.
+  // 03.jpg vem PRIMEIRA por ser LANDSCAPE (h=185): a foto-ancora do
+  // hero mora numa faixa estreita entre o paragrafo de intro e o
+  // limite inferior do viewport, e uma orientacao horizontal cabe
+  // ali sem invadir o texto. As verticais (02/04) ficam no topo do
+  // miolo como picos dominantes.
+  const BEADS = [
+    { src: 'photos/03.jpg', cap: 'two shores, one breath',       w: 290, h: 185, hue: 48 },
+    { src: 'photos/02.jpg', cap: 'the hour nobody claims',       w: 220, h: 285, hue: 50 },
+    { src: 'photos/04.jpg', cap: 'water that remembers',         w: 215, h: 270, hue: 56 },
+    { src: 'photos/01.jpg', cap: 'a door held open by nothing',  w: 200, h: 250, hue: 55 },
+    { src: 'photos/05.jpg', cap: 'returning, slower',            w: 160, h: 215, hue: 44 },
+    { src: 'photos/06.jpg', cap: 'the announcement, in reverse', w: 280, h: 160, hue: 46 },
+    { src: 'photos/07.jpg', cap: 'someone waited up',            w: 210, h: 260, hue: 52 },
+    { src: 'photos/08.jpg', cap: 'steam, a small apology',       w: 170, h: 170, hue: 62 },
+    { src: 'photos/09.jpg', cap: 'a room becoming itself',       w: 260, h: 200, hue: 54 },
+    { src: 'photos/10.jpg', cap: 'folding time into cloth',      w: 170, h: 225, hue: 60 },
+    { src: 'photos/11.jpg', cap: 'a green held against white',   w: 220, h: 275, hue: 58 },
+    { src: 'photos/12.jpg', cap: 'red older than the mountain',  w: 300, h: 170, hue: 40 },
+    { src: 'photos/13.jpg', cap: 'something beginning again',    w: 175, h: 230, hue: 55 },
+    { src: 'photos/14.jpg', cap: 'summer refusing to end',       w: 200, h: 250, hue: 50 },
+    { src: 'photos/15.jpg', cap: 'lanterns, thinning crowd',     w: 260, h: 175, hue: 48 },
+    { src: 'photos/16.jpg', cap: 'a grammar of small lights',    w: 170, h: 225, hue: 45 },
+    { src: 'photos/17.jpg', cap: 'a face made of outside',       w: 210, h: 260, hue: 52 },
+    { src: 'photos/18.jpg', cap: 'the map becomes a feeling',    w: 195, h: 245, hue: 56 },
+  ];
+
+  if (IS_MOBILE) {
+    initMobile();
+    return;
+  }
+  initDesktop();
+
+  // ════════════════════════════════════════════════════════════════════
+  // MOBILE INIT — beads-on-threads + lightbox simples.
+  //
+  // Antes: galeria flat (mobile-shell) com os fios só de pano de fundo.
+  // Era ágil mas o conceito musubi (fotos AMARRADAS pelos fios) sumia.
+  //
+  // Agora: replicamos a engine desktop — fotos posicionadas ao longo
+  // dos fios, posições atualizadas a cada frame. O que mudou em relação
+  // à tentativa antiga (que travava o celular):
+  //
+  //   • DPR 1.0 (vs 2–3× nativo) → ~7–9× menos pixels no canvas
+  //   • Sem glow pass nem blur filter no mobile (feito no threads.js)
+  //   • scrollEnergy quase zerado no mobile (0.95 + 0.15·E em vez de
+  //     0.85 + 1.4·E) → fios não dançam fora do controle no scroll
+  //   • Fotos a 55% do tamanho desktop (cabe na coluna estreita)
+  //   • Sem cap de fps: roda no native rAF (60–120Hz) → scroll suave
+  //   • Sem lerp de scroll: usa window.scrollY direto → zero trailing
+  //
+  // Click numa foto abre o LIGHTBOX SIMPLES (.lb), não o dolly de cena
+  // do desktop — em telinha o zoom-in-na-cena fica claustrofóbico.
+  // ════════════════════════════════════════════════════════════════════
+  function initMobile() {
+    // Lightbox primeiro: setupLightbox expõe window.__lb_open, que os
+    // handlers de click dos beads vão chamar.
+    setupLightbox();
+
+    const VIEWPORT_H = window.innerHeight;
+    const OPENING_H  = VIEWPORT_H;
+    // Mundo mais alto no mobile (10.5 viewports vs 6.5 antes) pra caber
+    // ≥12 cruzamentos espalhados depois dos respiros e do dedup. Em
+    // tela estreita os fios serpenteiam mais "comprimidos" — precisamos
+    // de mais altura pra os cruzamentos com o fio diagonal aparecerem
+    // do começo ao fim do scroll. Calibração feita por simulação.
+    const WORLD_H    = VIEWPORT_H * 10.5;
+    const CODA_H     = VIEWPORT_H;
+    const TOTAL_H    = OPENING_H + WORLD_H + CODA_H;
+
+    document.getElementById('world').style.height = WORLD_H + 'px';
+
+    const canvas = document.getElementById('threads');
+    // DPR 1.0: phones vêm com 2.5–3× DPR; clampar a 1.0 corta o trabalho
+    // do canvas em ~7–9×. Os fios são curvas suaves, perda de nitidez é
+    // invisível.
+    const DPR = Math.min(1, window.devicePixelRatio || 1);
+    function sizeCanvas() {
+      canvas.width  = Math.round(window.innerWidth  * DPR);
+      canvas.height = Math.round(window.innerHeight * DPR);
+      canvas.style.width  = window.innerWidth  + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      canvas.getContext('2d').setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    sizeCanvas();
+
+    const { Thread, World, generateMeander } = window.Musubi;
+    const world = new World(canvas, { worldHeight: TOTAL_H });
+
+    const Y1 = OPENING_H + WORLD_H;
+    const W  = window.innerWidth;
+
+    // Helper: amplitude máx ~42% da largura. No celular um fio com 360px
+    // de amplitude (desktop) sai pra fora dos dois lados — vira pulo.
+    const ampCap = (a) => Math.min(W * 0.42, a);
+
+    function meanderThread(cfg) {
+      const path = generateMeander({
+        startX: cfg.startX, startY: cfg.startY,
+        endX: cfg.endX, endY: cfg.endY,
+        amplitude: ampCap(cfg.amplitude),
+        wavelength: cfg.wavelength,
+        secondary: cfg.secondary != null ? cfg.secondary : 0.25,
+        seed: cfg.seed,
+      });
+      return world.add(new Thread({
+        path,
+        hue: cfg.hue, sat: cfg.sat, light: cfg.light,
+        thickness: cfg.thickness || 1.0,
+        blurPx: 0,            // mobile já ignora blur, deixo explícito
+        baseAlpha: cfg.baseAlpha != null ? cfg.baseAlpha : 0.55,
+        glowAlpha: cfg.glowAlpha != null ? cfg.glowAlpha : 0.16,
+        breatheAmp: cfg.breatheAmp != null ? cfg.breatheAmp : 8,
+      }));
+    }
+
+    // 2 fios só — pedido do Caio: "uma principal e uma meio que se
+    // cruzando com ela". Custo cai pra ~40% comparado a 5 fios e o
+    // conceito musubi (laços que se cruzam) fica mais legível.
+    //
+    // A: espinha vertical central, atravessa o mundo inteiro.
+    // B: diagonal NW→SE atravessando o mundo inteiro. Como B tem spine
+    //    diagonal e meander perpendicular, ela CRUZA A várias vezes ao
+    //    longo da rolagem — é o "meio que se cruzando" do conceito.
+    // A: espinha vertical central, serpenteia agressivo (wavelength 720)
+    //    pra cruzar a diagonal B múltiplas vezes ao longo do mundo.
+    //    Cada cruzamento é onde uma memória pode ancorar.
+    // B: diagonal NW→SE atravessando o mundo inteiro, com wavelength
+    //    760 e amplitude moderada — o suficiente pra os cruzamentos
+    //    com A se distribuírem do topo ao fundo.
+    // Calibração feita por simulação: estes parâmetros geram ~13
+    //    cruzamentos brutos → ~6 após filtros + respiros + dedup.
+    const A = meanderThread({
+      startX: W * 0.50, startY: -200,
+      endX:   W * 0.50, endY:   Y1 + 200,
+      amplitude: 280, wavelength: 580, secondary: 0.26,
+      hue: 358, sat: 80, light: 30,
+      thickness: 1.10, baseAlpha: 0.64, glowAlpha: 0.22,
+      seed: 101,
+      breatheAmp: 9,
+    });
+    const B = meanderThread({
+      startX: W * 0.18, startY: VIEWPORT_H * 0.30,
+      // endY escala com WORLD_H (10.5VH). Antes era 6.20VH com world
+      // 6.5VH; agora 10.20VH com world 10.5VH — diagonal continua
+      // atravessando praticamente todo o mundo.
+      endX:   W * 0.82, endY:   VIEWPORT_H * 10.20,
+      amplitude: 170, wavelength: 700, secondary: 0.30,
+      hue: 4, sat: 72, light: 36,
+      thickness: 0.82, baseAlpha: 0.54, glowAlpha: 0.18,
+      seed: 211,
+      breatheAmp: 8,
+    });
+
+    // ── Interseções A × B ────────────────────────────────────────────
+    // A diagonal cruza a espinha N vezes (~5–8 cruzamentos típicos no
+    // mundo de 6.5×viewport). Mesma poética do desktop: a memória
+    // aparece onde os fios se amarram. Sem cruzamento útil, fallback
+    // ancora a foto num arc-length do fio principal.
+    const { findThreadIntersections: _fti } = window.Musubi;
+    let crossings = _fti(A, B);
+
+    const Y_MIN_M = OPENING_H + 100;
+    const Y_MAX_M = OPENING_H + WORLD_H - 100;
+    const RESPIRO_FRACS_M = [0.20, 0.50, 0.80];
+    const RESPIRO_HALF_M = VIEWPORT_H * 0.55;
+    const respiroYs_M = RESPIRO_FRACS_M.map(f => OPENING_H + WORLD_H * f);
+    const inRespiroZone_M = (y) => respiroYs_M.some(ry => Math.abs(y - ry) < RESPIRO_HALF_M);
+
+    crossings = crossings
+      .filter(c => c.y >= Y_MIN_M && c.y <= Y_MAX_M)
+      .filter(c => !inRespiroZone_M(c.y));
+    crossings.sort((a, b) => a.y - b.y);
+
+    // Dedupe por Y (no mobile cada respiro precisa de espaço próprio,
+    // e dois cruzamentos a < ~35vh viram um só visualmente).
+    const MIN_DY = VIEWPORT_H * 0.26;
+    const dedup = [];
+    for (const c of crossings) {
+      let close = false;
+      for (const p of dedup) {
+        if (Math.abs(p.y - c.y) < MIN_DY) { close = true; break; }
+      }
+      if (!close) dedup.push(c);
+    }
+
+    // Mobile: limita a 8 fotos. Em telinha mais que isso vira ruído —
+    // escolha curatorial. Se faltarem cruzamentos, reduz ainda mais.
+    const MOBILE_MAX = 12;
+    let limitedBeads = BEADS.slice(0, MOBILE_MAX);
+    let picked = dedup;
+    if (dedup.length > limitedBeads.length) {
+      picked = [];
+      const stride = dedup.length / limitedBeads.length;
+      for (let k = 0; k < limitedBeads.length; k++) {
+        picked.push(dedup[Math.floor(k * stride + stride / 2)]);
+      }
+    } else if (dedup.length < limitedBeads.length) {
+      limitedBeads = limitedBeads.slice(0, dedup.length);
+    }
+
+    const beadLayer = document.getElementById('beads');
+    const beadEls = [];
+    const MS_BASE = 0.55;  // base scale mobile
+
+    limitedBeads.forEach((b, i) => {
+      // Variação determinística por foto: só tamanho. Opacidade fica
+      // plena depois do fade-in (sem variação persistente — versão
+      // anterior deixava algumas fotos sempre apagadas, o que matava
+      // a leitura). Range 0.85–1.05 do MS_BASE pra variação sutil.
+      const v = (salt) => {
+        const s = Math.sin((i + salt) * 12.9898) * 43758.5453;
+        return Math.abs(s - Math.floor(s));
+      };
+      const sizeMul = MS_BASE * (0.85 + v(1) * 0.20);
+      const mw = Math.round(b.w * sizeMul);
+      const mh = Math.round(b.h * sizeMul);
+
+      const cross = picked[i];
+
+      const el = document.createElement('div');
+      el.className = 'bead';
+      el.style.setProperty('--w', mw + 'px');
+      el.style.setProperty('--h', mh + 'px');
+      el.innerHTML = '<div class="plate is-placeholder" style="--hue:' + b.hue + ';"></div>';
+      const plate = el.querySelector('.plate');
+
+      if (b.src) {
+        const img = document.createElement('img');
+        img.alt = b.cap;
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        img.style.opacity = '0';
+        img.style.transition = 'opacity 600ms ease';
+        img.addEventListener('load', () => {
+          plate.classList.remove('is-placeholder');
+          img.style.opacity = '1';
+        });
+        img.addEventListener('error', () => { img.remove(); });
+        plate.insertBefore(img, plate.firstChild);
+        img.src = b.src;
+      }
+
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        if (window.__lb_open) window.__lb_open(b, i);
+      });
+
+      beadLayer.appendChild(el);
+
+      if (cross) {
+        beadEls.push({
+          el, plate, mode: 'cross',
+          threadA: A, sA: cross.sA,
+          threadB: B, sB: cross.sB,
+          rev: false, w: mw, h: mh, data: b, idx: i,
+        });
+      } else {
+        // Improvável — só se não houver cruzamento algum (fios paralelos).
+        beadEls.push({
+          el, plate, mode: 'thread',
+          thread: A,
+          s: A.path.length * (0.18 + 0.66 * (i / Math.max(1, limitedBeads.length - 1))),
+          rev: false, w: mw, h: mh, data: b, idx: i,
+        });
+      }
+    });
+
+    const respiroEls = Array.from(document.querySelectorAll('.respiro'));
+
+    // ── Scroll & frame loop ──────────────────────────────────────────
+    // Sem cap de 30fps, sem lerp. scrollY direto. Em mobile o scroll
+    // é synchronous com o rAF, então usar o valor atual elimina o
+    // "trailing" que dava sensação de samba.
+    window.addEventListener('resize', sizeCanvas);
+
+    function frame(now) {
+      const camY = window.scrollY;
+      world.step(camY, now);
+      world.draw();
+
+      for (const b of beadEls) {
+        let pos;
+        if (b.mode === 'cross') {
+          const pA = world.beadPositionAtArc(b.threadA, b.sA);
+          const pB = world.beadPositionAtArc(b.threadB, b.sB);
+          if (pA && pB) {
+            pos = { x: (pA.x + pB.x) * 0.5, y: (pA.y + pB.y) * 0.5,
+                    alpha: Math.min(pA.alpha, pB.alpha) };
+          } else if (pA || pB) {
+            pos = pA || pB;
+          }
+        } else {
+          pos = world.beadPositionAtArc(b.thread, b.s);
+        }
+        if (pos && pos.alpha > 0.05) {
+          b.el.style.left = pos.x + 'px';
+          b.el.style.top  = pos.y + 'px';
+          // Opacidade fixa em 1 quando visivel - pos.alpha so decide
+          // mostrar/esconder, nao modula transparencia.
+          b.el.style.setProperty('--alpha', '1');
+          if (!b.rev) {
+            requestAnimationFrame(() => b.el.classList.add('visible'));
+            b.rev = true;
+          }
+        } else {
+          b.el.classList.remove('visible');
+          b.rev = false;
+        }
+      }
+
+      // Respiros: opacidade pico quando o centro do painel esta perto
+      // do centro da viewport. Curva smoothstep igual à das fotos —
+      // memória que surge, descansa, some.
+      for (const r of respiroEls) {
+        const rect = r.getBoundingClientRect();
+        const center = rect.top + rect.height * 0.5;
+        const dist = Math.abs(center - VIEWPORT_H * 0.5);
+        const t = Math.max(0, 1 - dist / (VIEWPORT_H * 0.55));
+        const a = t * t * (3 - 2 * t);
+        r.style.opacity = a.toFixed(3);
+      }
+
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // ── Lightbox ─────────────────────────────────────────────────────────
+  // Estrutura .lb > .lb-content (flex column). Centro do conjunto = centro
+  // da viewport. Sem transform de cena, sem scale.
+  function setupLightbox() {
+    const lb       = document.getElementById('lb');
+    const lbImg    = document.getElementById('lbImg');
+    const lbCap    = document.getElementById('lbCap');
+    const lbId     = document.getElementById('lbId');
+    const lbClose  = document.getElementById('lbClose');
+    if (!lb) return;
+
+    let lbOpen = false;
+
+    function openLb(b, i) {
+      if (lbOpen) return;
+      lbOpen = true;
+      lbImg.src = b.src || '';
+      lbImg.alt = b.cap;
+      lbCap.textContent = '“' + b.cap + '”';
+      lbId.textContent  = 'caio magalhães · ' + String(i + 1).padStart(2, '0');
+      lb.classList.add('active');
+      lb.setAttribute('aria-hidden', 'false');
+      document.documentElement.style.overflow = 'hidden';
+    }
+    function closeLb() {
+      if (!lbOpen) return;
+      lbOpen = false;
+      lb.classList.remove('active');
+      lb.setAttribute('aria-hidden', 'true');
+      document.documentElement.style.overflow = '';
+    }
+
+    // Expõe globalmente pra cards chamarem.
+    window.__lb_open = openLb;
+
+    // Tap em qualquer lugar do fundo fecha (mas não na imagem).
+    lb.addEventListener('click', (ev) => {
+      if (ev.target !== lbImg) closeLb();
+    });
+    lbClose.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      closeLb();
+    });
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && lbOpen) closeLb();
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // DESKTOP INIT
+  //
+  // Aqui mora a engine original com canvas animado, threads serpenteando
+  // e fotos deslizando ao longo deles. Só roda em telas largas o
+  // suficiente pra aguentar o overhead com folga.
+  // ════════════════════════════════════════════════════════════════════
+  function initDesktop() {
+    const VIEWPORT_H = window.innerHeight;
+    const OPENING_H = VIEWPORT_H;
+    const WORLD_H   = VIEWPORT_H * 9.0;  // era 6.5 - mundo esticado pra dar respiro vertical entre fotos
+    const CODA_H    = VIEWPORT_H;
+    const TOTAL_H   = OPENING_H + WORLD_H + CODA_H;
+
+    document.getElementById('world').style.height = WORLD_H + 'px';
+
+    const canvas = document.getElementById('threads');
+    // DPR boost 1.5× pro zoom do dolly não borrar (desktop só).
+    const DPR = Math.min(2, window.devicePixelRatio || 1) * 1.5;
+    function sizeCanvas() {
+      canvas.width  = Math.round(window.innerWidth  * DPR);
+      canvas.height = Math.round(window.innerHeight * DPR);
+      canvas.style.width  = window.innerWidth  + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    sizeCanvas();
+
+    const { Thread, World, generateMeander } = window.Musubi;
+    const world = new World(canvas, { worldHeight: TOTAL_H });
+
+    const Y1 = OPENING_H + WORLD_H;
+    const W = window.innerWidth;
+
+    function meanderThread(cfg) {
+      const path = generateMeander({
+        startX: cfg.startX, startY: cfg.startY,
+        endX: cfg.endX, endY: cfg.endY,
+        amplitude: cfg.amplitude,
+        wavelength: cfg.wavelength,
+        secondary: cfg.secondary != null ? cfg.secondary : 0.25,
+        seed: cfg.seed,
+      });
+      return world.add(new Thread({
+        path,
+        hue: cfg.hue, sat: cfg.sat, light: cfg.light,
+        thickness: cfg.thickness || 1.0,
+        blurPx: cfg.blurPx || 0,
+        baseAlpha: cfg.baseAlpha != null ? cfg.baseAlpha : 0.58,
+        glowAlpha: cfg.glowAlpha != null ? cfg.glowAlpha : 0.18,
+        breatheAmp: cfg.breatheAmp,
+      }));
+    }
+
+    // ── Threads ──────────────────────────────────────────────────────
+    // Composicao em camadas pra criar um RITMO cinematografico no scroll:
+    //   • A (espinha vertical) atravessa o documento inteiro — presenca
+    //     constante. No hero ela vai SOZINHA, junto de uma diagonal
+    //     curta (Z) que cruza A 1–2 vezes. Resultado: hero respira com
+    //     poucos fios, peso visual fica nas 1–2 fotos do topo.
+    //   • B, C entram so depois do hero (startY > 1.0VH). A malha
+    //     adensa progressivamente conforme se desce.
+    //   • D, E, F, G, H sustentam a regiao de imersao no miolo. G
+    //     atravessa o topo como ATMOSFERA (faint, blur alto) sem
+    //     adicionar nos visuais ao hero.
+    const A = meanderThread({
+      startX: W * 0.50, startY: -300,
+      endX:   W * 0.50, endY:   Y1 + 300,
+      amplitude: 360, wavelength: 1100, secondary: 0.22,
+      hue: 358, sat: 80, light: 30,
+      thickness: 1.25, baseAlpha: 0.68, glowAlpha: 0.24,
+      seed: 101,
+    });
+    // Z: thread CURTA exclusiva do hero. Diagonal NW→SE alojada no
+    // 1/8 INFERIOR do primeiro viewport (Y 0.82→0.97VH). Posicao
+    // critica: o paragrafo de intro centraliza ate ~0.62VH com fonte
+    // pequena ou ate ~0.78VH com texto longo, entao Z fica SEMPRE
+    // abaixo dessa banda. Amplitude pequena (90px) e wavelength curta
+    // (320px) sobre spine ~1040px → ~3 oscilacoes que pendulam ao
+    // redor de A. Z cruza A 1–3 vezes criando NO(s) onde a foto-
+    // ancora do hero descansa, sempre na faixa segura abaixo do texto.
+    const Z = meanderThread({
+      startX: W * 0.18, startY: VIEWPORT_H * 0.82,
+      endX:   W * 0.82, endY:   VIEWPORT_H * 0.97,
+      amplitude: 90, wavelength: 320, secondary: 0.22,
+      hue: 358, sat: 60, light: 40,
+      thickness: 0.62, baseAlpha: 0.38, glowAlpha: 0.11,
+      blurPx: 0.3,
+      seed: 67,
+    });
+    // B/C empurradas pra depois do hero. Antes comecavam em 0.4–0.6VH
+    // e brigavam pelo respiro do topo; agora aparecem so na zona de
+    // descoberta (logo apos OPENING_H).
+    const B = meanderThread({
+      startX: W * 0.22, startY: VIEWPORT_H * 1.05,
+      endX:   W * 0.30, endY:   VIEWPORT_H * 5.8,
+      amplitude: 220, wavelength: 820, secondary: 0.30,
+      hue: 2, sat: 76, light: 36,
+      thickness: 0.85, baseAlpha: 0.52, glowAlpha: 0.16,
+      seed: 207,
+    });
+    const C = meanderThread({
+      startX: W * 0.78, startY: VIEWPORT_H * 1.10,
+      endX:   W * 0.72, endY:   VIEWPORT_H * 5.0,
+      amplitude: 200, wavelength: 760, secondary: 0.28,
+      hue: 356, sat: 70, light: 32,
+      thickness: 0.75, baseAlpha: 0.48, glowAlpha: 0.14,
+      blurPx: 0.4,
+      seed: 313,
+    });
+    const D = meanderThread({
+      startX: W * 0.85, startY: VIEWPORT_H * 1.4,
+      endX:   W * 0.80, endY:   VIEWPORT_H * 8.0,
+      amplitude: 180, wavelength: 900, secondary: 0.20,
+      hue: 4, sat: 58, light: 44,
+      thickness: 0.55, baseAlpha: 0.32, glowAlpha: 0.10,
+      blurPx: 1.2,
+      seed: 419,
+    });
+    const E = meanderThread({
+      startX: W * 0.38, startY: VIEWPORT_H * 4.5,
+      endX:   W * 0.42, endY:   VIEWPORT_H * 8.6,
+      amplitude: 230, wavelength: 780, secondary: 0.26,
+      hue: 0, sat: 78, light: 28,
+      thickness: 0.9, baseAlpha: 0.55, glowAlpha: 0.18,
+      seed: 523,
+    });
+    const F = meanderThread({
+      startX: W * 0.65, startY: VIEWPORT_H * 6.2,
+      endX:   W * 0.62, endY:   VIEWPORT_H * 9.0,
+      amplitude: 200, wavelength: 700, secondary: 0.30,
+      hue: 358, sat: 66, light: 38,
+      thickness: 0.7, baseAlpha: 0.45, glowAlpha: 0.14,
+      blurPx: 0.3,
+      seed: 631,
+    });
+    const G = meanderThread({
+      startX: W * 0.12, startY: -80,
+      endX:   W * 0.18, endY:   VIEWPORT_H * 3.0,
+      amplitude: 160, wavelength: 700, secondary: 0.22,
+      hue: 4, sat: 52, light: 48,
+      thickness: 0.5, baseAlpha: 0.26, glowAlpha: 0.08,
+      blurPx: 1.8,
+      seed: 743,
+    });
+    const H = meanderThread({
+      startX: W * 0.55, startY: VIEWPORT_H * 7.3,
+      endX:   W * 0.50, endY:   VIEWPORT_H * 9.4,
+      amplitude: 180, wavelength: 650, secondary: 0.25,
+      hue: 2, sat: 60, light: 40,
+      thickness: 0.65, baseAlpha: 0.35, glowAlpha: 0.10,
+      blurPx: 0.7,
+      seed: 857,
+    });
+
+    // ── Interseções: onde os fios se amarram, surgem as memórias ─────
+    // Pra cada par de fios, calculamos onde os caminhos se cruzam. Cada
+    // cruzamento vira potencial "nó" (musubi) onde uma foto pode ser
+    // ancorada. Isso troca a distribuição aleatória anterior pela
+    // metáfora explícita do conceito: a foto está onde dois fios se
+    // encontram.
+    // Z entra no allThreads pra que findThreadIntersections inclua
+    // os crossings Z×A (e qualquer outro vizinho que toque o hero).
+    const allThreads = [A, B, C, D, E, F, G, H, Z];
+    const { findThreadIntersections: _fti } = window.Musubi;
+    let crossings = [];
+    for (let i = 0; i < allThreads.length; i++) {
+      for (let j = i + 1; j < allThreads.length; j++) {
+        const ix = _fti(allThreads[i], allThreads[j]);
+        for (const p of ix) {
+          crossings.push({
+            x: p.x, y: p.y, sA: p.sA, sB: p.sB,
+            threadA: allThreads[i], threadB: allThreads[j],
+          });
+        }
+      }
+    }
+
+    // ── Filtros de zona ───────────────────────────────────────────────
+    // HERO_Y mede dinamicamente o BLOCO de texto da intro pra fixar a
+    // foto-ancora do hero ESTRITAMENTE abaixo da ultima linha lida.
+    // Sem isso, valores hard-coded falham quando o paragrafo cresce
+    // (mais texto → mais linhas → bottom mais baixo) ou em viewports
+    // diferentes. Margem de seguranca: +28px de respiro tipografico
+    // + meia-altura estimada da maior foto hero (152px). Aplicamos
+    // tambem um PISO de 0.86VH pra cobrir o caso da fonte Cormorant
+    // ainda nao ter carregado quando a script roda (a medida sai
+    // menor que a versao final renderizada).
+    const heroIntroEl = document.querySelector('.hero .intro');
+    const introMeasuredBottom = heroIntroEl
+      ? heroIntroEl.getBoundingClientRect().bottom
+      : 0;
+    const introBottomY = Math.max(introMeasuredBottom, VIEWPORT_H * 0.62);
+    const HERO_PHOTO_HALF = 152;            // h max ~305 (185 * 1.65)
+    const HERO_Y_MIN = Math.max(
+      introBottomY + 28 + HERO_PHOTO_HALF,
+      VIEWPORT_H * 0.86
+    );
+    const HERO_Y_MAX = VIEWPORT_H * 0.96;   // photo bottom pode passar do hero — cai no buffer entre OPENING_H e Y_MIN
+    const Y_MIN = OPENING_H + 280;          // +280 (era +120) - folga p/ a foto hero alongada
+    const Y_MAX = OPENING_H + WORLD_H - 120;
+    const RESPIRO_FRACS = [0.20, 0.50, 0.80];
+    // RESPIRO_HALF = 0.62VH: o BLOCO de texto do respiro mede ~210px
+    // (lead + body em colormorant). 0.62VH = 558px de raio em 900vh
+    // garante folga de ~250px entre texto e centro de foto vizinha,
+    // mais que a meia-altura da maior foto. Antes era 0.55, mas com
+    // fotos ocasionais em sizeMul 1.30+ a margem encolhia demais.
+    const RESPIRO_HALF = VIEWPORT_H * 0.62;
+    const respiroYs = RESPIRO_FRACS.map(f => OPENING_H + WORLD_H * f);
+    const inRespiroZone = (y) => respiroYs.some(ry => Math.abs(y - ry) < RESPIRO_HALF);
+
+    // Crossings do HERO: so Z×A — cruzamento limpo no centro horizontal
+    // (x ≈ 0.5W). Outras combinacoes (Z×G por ex) caem em x baixo e
+    // poderiam colidir com a coluna do titulo vertical. Filtra pela
+    // faixa do hero (metade inferior).
+    const heroRaw = crossings.filter(c =>
+      ((c.threadA === Z && c.threadB === A) ||
+       (c.threadA === A && c.threadB === Z)) &&
+      c.y >= HERO_Y_MIN && c.y <= HERO_Y_MAX
+    );
+    heroRaw.sort((a, b) => a.y - b.y);
+    // Hero hospeda UMA foto forte e grande. O brief pede "1–2"; com
+    // a faixa do hero limitada a metade inferior do viewport, uma
+    // unica foto a 1.55x sustenta o peso visual sem competir com o
+    // titulo vertical e o paragrafo de intro. Mantemos a lista de
+    // crossings ordenada por Y — pega-se o primeiro (mais alto, ja
+    // visivel sem rolar).
+    const HERO_PHOTOS = Math.min(1, heroRaw.length);
+    const heroPicked = heroRaw.slice(0, HERO_PHOTOS);
+
+    // Crossings do CORPO: tudo que cai entre hero e coda, fora dos
+    // respiros, e tambem fora da zona do hero (pra evitar duplicar).
+    let bodyCx = crossings
+      .filter(c => c.y >= Y_MIN && c.y <= Y_MAX)
+      .filter(c => !inRespiroZone(c.y));
+
+    // Sort + dedupe estilo BBOX. O criterio anterior (distancia
+    // euclidiana < 220) deixava passar dois cruzamentos com mesmo X
+    // separados em Y por 200-220px - mas fotos de 250-275px de altura
+    // se sobrepoem nesse intervalo. Agora uso retangulo: dois
+    // cruzamentos so sao "o mesmo no" se estiverem proximos em X
+    // (< 240) E em Y (< 270). Caso contrario sao mantidos.
+    bodyCx.sort((a, b) => a.y - b.y);
+    const MIN_DX = 240;
+    const MIN_DY = 270;
+    const dedup = [];
+    for (const c of bodyCx) {
+      let tooClose = false;
+      for (const p of dedup) {
+        if (Math.abs(p.x - c.x) < MIN_DX &&
+            Math.abs(p.y - c.y) < MIN_DY) { tooClose = true; break; }
+      }
+      if (!tooClose) dedup.push(c);
+    }
+
+    // Pra (BEADS.length - HERO_PHOTOS) fotos do corpo, distribuimos
+    // UNIFORMEMENTE em Y. Combina-se com os hero crossings na frente
+    // pra montar o `picked` final que casa com BEADS[i].
+    const BODY_PHOTOS = BEADS.length - HERO_PHOTOS;
+    let bodyPicked = dedup;
+    if (dedup.length > BODY_PHOTOS) {
+      bodyPicked = [];
+      const stride = dedup.length / BODY_PHOTOS;
+      for (let k = 0; k < BODY_PHOTOS; k++) {
+        bodyPicked.push(dedup[Math.floor(k * stride + stride / 2)]);
+      }
+    }
+    const picked = heroPicked.concat(bodyPicked);
+
+    // Anti-overlap por bbox real. O dedup acima usa distancia entre
+    // CENTROS, mas as fotos tem tamanhos bem diferentes (160x215 a
+    // 300x275 ja com sizeMul). Dois cruzamentos a 230px de distancia
+    // podem hospedar fotos que ainda se tocam se forem grandes. Aqui,
+    // durante o placement, se a foto i for colidir com outra ja
+    // posicionada, busco a proxima crossing livre do dedup que nao
+    // colide. Mantem a distribuicao em Y na maior parte dos casos e so
+    // reposiciona quando ha conflito real.
+    const usedCross = new Set(picked.filter(Boolean));
+    const placedBoxes = []; // {cx, cy, w, h} em coords de mundo
+    const OVERLAP_PAD = 22; // folga p/ respiracao da thread + sombra
+    function bboxOverlap(c, w, h) {
+      for (const p of placedBoxes) {
+        const dx = Math.abs(p.cx - c.x);
+        const dy = Math.abs(p.cy - c.y);
+        if (dx < (p.w + w) / 2 + OVERLAP_PAD &&
+            dy < (p.h + h) / 2 + OVERLAP_PAD) return true;
+      }
+      return false;
+    }
+
+    const BEAD_THREADS_FB = [A, B, C, D, E, F, H, Z];  // fallback - caso falte cruzamento
+    const beadLayer = document.getElementById('beads');
+    const beadEls = [];
+
+    // Indices "dominantes" do corpo: fotos que ganham um boost de
+    // tamanho pra criar PICOS visuais. As 2 primeiras posicoes do
+    // corpo (i=1, i=2 → 03.jpg e 04.jpg, fotos REAIS) sustentam a
+    // entrada da imersao logo apos o hero. i=10 cai numa zona densa
+    // entre os respiros ii e iii — terceiro pico, ja com placeholder.
+    // Se o hero usar 2 fotos, removemos i=1 desta lista (04.jpg
+    // continua dominante).
+    const DOMINANT_BODY = new Set([2, 10]);
+    if (HERO_PHOTOS < 2) DOMINANT_BODY.add(1);
+
+    BEADS.forEach((b, i) => {
+      // Variacao deterministica por foto. Tres regimes de tamanho:
+      //   • HERO (i < HERO_PHOTOS): 1.40–1.60x — peso visual real
+      //     no topo, conforme briefing "1–2 strong images already
+      //     visible (larger than others)".
+      //   • DOMINANT (DOMINANT_BODY): 1.18–1.32x — picos pontuais
+      //     que quebram a uniformidade do miolo.
+      //   • REST: 0.65–1.00x (range mais estreito que o anterior
+      //     0.70–1.10) — empurra as fotos NAO-dominantes pra baixo,
+      //     criando contraste mais limpo entre densidade alta e
+      //     "silencio visual" das areas calmas.
+      const v = (salt) => {
+        const s = Math.sin((i + salt) * 12.9898) * 43758.5453;
+        return Math.abs(s - Math.floor(s));
+      };
+      let sizeMul;
+      if (i < HERO_PHOTOS) {
+        // Foto landscape (BEADS[0] = 03.jpg, h=185). Em 1.55x sai
+        // 287px de altura — cabe na faixa de ~200px entre o fim do
+        // paragrafo de intro (~0.62VH) e o limite inferior do
+        // viewport, com folga.
+        sizeMul = 1.50 + v(1) * 0.15;     // 1.50–1.65 — foto-ancora do hero
+      } else if (DOMINANT_BODY.has(i)) {
+        sizeMul = 1.20 + v(1) * 0.16;     // 1.20–1.36 — picos pontuais
+      } else {
+        sizeMul = 0.62 + v(1) * 0.36;     // 0.62–0.98 — fotos do miolo
+      }
+      const w = Math.round(b.w * sizeMul);
+      const h = Math.round(b.h * sizeMul);
+
+      let cross = picked[i];
+      // Se a posicao preferida cruza outra foto ja posicionada, tenta
+      // substituir por uma crossing ainda nao usada do dedup que nao
+      // colida. Procura primeiro vizinhos proximos (em Y) pra preservar
+      // ao maximo a distribuicao original.
+      if (cross && bboxOverlap(cross, w, h)) {
+        const baseIdx = dedup.indexOf(cross);
+        let replacement = null;
+        for (let d = 1; d < dedup.length && !replacement; d++) {
+          for (const candidate of [dedup[baseIdx + d], dedup[baseIdx - d]]) {
+            if (!candidate || usedCross.has(candidate)) continue;
+            if (bboxOverlap(candidate, w, h)) continue;
+            replacement = candidate;
+            break;
+          }
+        }
+        if (replacement) {
+          usedCross.delete(cross);
+          cross = replacement;
+          usedCross.add(cross);
+        } else {
+          // Nenhum cruzamento livre - cai pro fallback (foto em arc
+          // de uma thread principal). Melhor uma foto fora de no que
+          // duas se sobrepondo.
+          usedCross.delete(cross);
+          cross = null;
+        }
+      }
+      if (cross) {
+        placedBoxes.push({ cx: cross.x, cy: cross.y, w, h });
+      }
+
+      const el = document.createElement('div');
+      el.className = 'bead';
+      el.style.setProperty('--w', w + 'px');
+      el.style.setProperty('--h', h + 'px');
+
+      const hasSrc = !!b.src;
+      el.innerHTML = '<div class="plate is-placeholder" style="--hue:' + b.hue + ';"></div>';
+      const plate = el.querySelector('.plate');
+
+      if (hasSrc) {
+        const img = document.createElement('img');
+        img.alt = b.cap;
+        img.decoding = 'async';
+        img.style.opacity = '0';
+        img.style.transition = 'opacity 600ms ease';
+        img.addEventListener('load', () => {
+          plate.classList.remove('is-placeholder');
+          img.style.opacity = '1';
+        });
+        img.addEventListener('error', () => { img.remove(); });
+        plate.insertBefore(img, plate.firstChild);
+        img.src = b.src;
+      }
+
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        dollyIn(i);
+      });
+
+      beadLayer.appendChild(el);
+
+      if (cross) {
+        beadEls.push({
+          el, plate, mode: 'cross',
+          threadA: cross.threadA, sA: cross.sA,
+          threadB: cross.threadB, sB: cross.sB,
+          rev: false, w, h, data: b, idx: i,
+        });
+      } else {
+        // Fallback bbox-aware: varre algumas posicoes ao longo de cada
+        // thread fallback e escolhe a primeira que nao colide com fotos
+        // ja posicionadas. Garante que o fallback nao recria a colisao
+        // que estavamos tentando evitar.
+        let chosen = null;
+        outer: for (let tIdx = 0; tIdx < BEAD_THREADS_FB.length; tIdx++) {
+          const thread = BEAD_THREADS_FB[(i + tIdx) % BEAD_THREADS_FB.length];
+          for (let fStep = 0; fStep < 9; fStep++) {
+            const frac = 0.15 + 0.70 * (fStep / 8);
+            const sArc = thread.path.length * frac;
+            const samp = thread.sampleArc(sArc, 0);
+            const probe = { x: samp.x, y: samp.y };
+            if (!bboxOverlap(probe, w, h)) {
+              chosen = { thread, s: sArc, x: samp.x, y: samp.y };
+              break outer;
+            }
+          }
+        }
+        if (chosen) {
+          placedBoxes.push({ cx: chosen.x, cy: chosen.y, w, h });
+          beadEls.push({
+            el, plate, mode: 'thread',
+            thread: chosen.thread, s: chosen.s,
+            rev: false, w, h, data: b, idx: i,
+          });
+        } else {
+          // Nem o fallback achou posicao livre - melhor nao mostrar a foto
+          // do que sobrepor. (Caso extremamente raro.)
+          el.remove();
+        }
+      }
+    });
+
+    const respiroEls = Array.from(document.querySelectorAll('.respiro'));
+
+    // ── Dolly camera ─────────────────────────────────────────────────
+    const scene         = document.getElementById('scene');
+    const dollyOverlay  = document.getElementById('dollyOverlay');
+    const dollyCaption  = document.getElementById('dollyCaption');
+    const dollyText     = document.getElementById('dollyText');
+    const dollyId       = document.getElementById('dollyId');
+    const dollyClose    = document.getElementById('dollyClose');
+
+    let isOpen = false;
+    let isAnimating = false;
+    let frozen = false;
+    let currentBead = null;
+
+    function computeDolly(beadEl) {
+      const rect = beadEl.getBoundingClientRect();
+      const px = rect.left + rect.width  / 2;
+      const py = rect.top  + rect.height / 2;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const cx = vw / 2;
+      const cy = vh / 2;
+      const targetH = vh * 0.78;
+      const targetW = vw * 0.86;
+      const scale = Math.min(targetH / rect.height, targetW / rect.width);
+      const tx = cx - scale * px;
+      const ty = cy - scale * py;
+      return { tx, ty, scale };
+    }
+
+    function dollyIn(index) {
+      if (isAnimating || isOpen) return;
+      const bead = beadEls[index];
+      if (!bead) return;
+      isAnimating = true;
+      isOpen = true;
+      currentBead = bead;
+      const { tx, ty, scale } = computeDolly(bead.el);
+      frozen = true;
+      scene.style.transform = 'translate(' + tx.toFixed(2) + 'px, ' + ty.toFixed(2) + 'px) scale(' + scale.toFixed(4) + ')';
+      dollyText.textContent = '“' + bead.data.cap + '”';
+      dollyId.textContent   = 'caio magalhães · ' + (index + 1).toString().padStart(2, '0');
+      document.body.classList.add('dolly-open');
+      dollyOverlay.classList.add('active');
+      dollyCaption.classList.add('active');
+      dollyClose.classList.add('active');
+      dollyOverlay.setAttribute('aria-hidden', 'false');
+      dollyCaption.setAttribute('aria-hidden', 'false');
+      setTimeout(() => { isAnimating = false; }, 660);
+    }
+
+    function dollyOut() {
+      if (!isOpen || isAnimating) return;
+      isAnimating = true;
+      scene.style.transform = '';
+      dollyOverlay.classList.remove('active');
+      dollyCaption.classList.remove('active');
+      dollyClose.classList.remove('active');
+      dollyOverlay.setAttribute('aria-hidden', 'true');
+      dollyCaption.setAttribute('aria-hidden', 'true');
+      setTimeout(() => {
+        document.body.classList.remove('dolly-open');
+        isOpen = false;
+        currentBead = null;
+        frozen = false;
+        isAnimating = false;
+      }, 660);
+    }
+
+    dollyOverlay.addEventListener('click', dollyOut);
+    dollyClose.addEventListener('click', dollyOut);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && isOpen) dollyOut();
+    });
+
+    // ── Scroll & render loop ────────────────────────────────────────
+    let targetScroll = window.scrollY;
+    let smoothScroll = targetScroll;
+    window.addEventListener('scroll', () => {
+      if (!isOpen) targetScroll = window.scrollY;
+    }, { passive: true });
+
+    function onResize() {
+      sizeCanvas();
+      if (isOpen && currentBead) {
+        const { tx, ty, scale } = computeDolly(currentBead.el);
+        scene.style.transition = 'none';
+        scene.style.transform  = 'translate(' + tx + 'px, ' + ty + 'px) scale(' + scale + ')';
+        void scene.offsetWidth;
+        scene.style.transition = '';
+      }
+    }
+    window.addEventListener('resize', onResize);
+
+    function frame(now) {
+      if (!frozen) {
+        smoothScroll += (targetScroll - smoothScroll) * 0.04;
+        const camY = smoothScroll;
+        world.step(camY, now);
+        world.draw();
+        for (const b of beadEls) {
+          let pos;
+          if (b.mode === 'cross') {
+            // Foto ancorada na média das duas posições — fica fixa no
+            // cruzamento mesmo enquanto cada fio respira por conta própria.
+            const pA = world.beadPositionAtArc(b.threadA, b.sA);
+            const pB = world.beadPositionAtArc(b.threadB, b.sB);
+            if (pA && pB) {
+              pos = { x: (pA.x + pB.x) * 0.5, y: (pA.y + pB.y) * 0.5,
+                      alpha: Math.min(pA.alpha, pB.alpha) };
+            } else if (pA || pB) {
+              pos = pA || pB;
+            }
+          } else {
+            pos = world.beadPositionAtArc(b.thread, b.s);
+          }
+          if (pos && pos.alpha > 0.05) {
+            b.el.style.left = pos.x + 'px';
+            b.el.style.top  = pos.y + 'px';
+            // Opacidade fixa em 1 quando visivel - pos.alpha so decide
+            // mostrar/esconder, nao modula transparencia.
+            b.el.style.setProperty('--alpha', '1');
+            if (!b.rev) {
+              requestAnimationFrame(() => b.el.classList.add('visible'));
+              b.rev = true;
+            }
+          } else {
+            b.el.classList.remove('visible');
+            b.rev = false;
+          }
+        }
+        // Respiros: fade peaks quando o centro do painel está no centro
+        // da viewport — mesma curva smoothstep das fotos. Memória que
+        // surge, descansa um instante, some.
+        for (const r of respiroEls) {
+          const rect = r.getBoundingClientRect();
+          const center = rect.top + rect.height * 0.5;
+          const dist = Math.abs(center - VIEWPORT_H * 0.5);
+          const t = Math.max(0, 1 - dist / (VIEWPORT_H * 0.55));
+          const a = t * t * (3 - 2 * t);
+          r.style.opacity = a.toFixed(3);
+        }
+      }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+})();
+</script>
+</body>
+</html>
